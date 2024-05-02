@@ -33,6 +33,16 @@ func NewServer(cfg Config) *Server {
 }
 
 func (s *Server) Start() error {
+	/*
+		1. Listen for incoming connections
+		2. Accept incoming connections
+		3. Create a new peer
+		4. Add the peer to the peers map
+		5. Start the read loop for the peer
+		6. Handle the connection
+		7. Close all peers
+		8. Close the server
+	*/
 	ln, err := net.Listen("tcp", s.ListenAddr)
 	if err != nil {
 		return err
@@ -46,10 +56,12 @@ func (s *Server) Start() error {
 func (s *Server) loop() {
 	for {
 		select {
+		// Add a new peer.
 		case peer := <-s.addPeerCh:
+			// Add the peer to the peers map.
 			s.peers[peer] = true
-
 		case <-s.quitCh:
+			// Close all peers.
 			return
 		}
 	}
@@ -57,6 +69,7 @@ func (s *Server) loop() {
 
 func (s *Server) acceptLoop() error {
 	for {
+		// Accept a new connection.
 		conn, err := s.ln.Accept()
 		if err != nil {
 			slog.Error("accept error", err)
@@ -66,6 +79,7 @@ func (s *Server) acceptLoop() error {
 	}
 }
 func (s *Server) handleConn(conn net.Conn) {
+	// Create a new peer.
 	peer := NewPeer(conn)
 	s.addPeerCh <- peer
 	slog.Info("new peer connected", "addr", conn.RemoteAddr())
