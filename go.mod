@@ -1,3 +1,5 @@
 module redis-go
 
-go 1.21.0
+go 1.21
+
+require github.com/tidwall/resp v0.1.1
