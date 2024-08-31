@@ -16,13 +16,21 @@ type Config struct {
 	ListenAddr string
 }
 
+type Message struct {
+	data []byte
+	peer *Peer
+}
+
 type Server struct {
 	Config
 	peers     map[*Peer]bool
 	ln        net.Listener
 	addPeerCh chan *Peer
 	quitCh    chan struct{}
-	msgCh     chan []byte
+	msgCh     chan Message
+
+	//
+	kv *KV
 }
 
 func NewServer(cfg Config) *Server {
@@ -34,7 +42,8 @@ func NewServer(cfg Config) *Server {
 		peers:     make(map[*Peer]bool),
 		addPeerCh: make(chan *Peer),
 		quitCh:    make(chan struct{}),
-		msgCh:     make(chan []byte),
+		msgCh:     make(chan Message),
+		kv:        NewKV(),
 	}
 }
 
@@ -58,20 +67,29 @@ func (s *Server) Start() error {
 	slog.Info("server started", "addr", s.ListenAddr)
 	return s.acceptLoop()
 }
-func (s *Server) set(key string, val string) error {
 
-}
-
-func (s *Server) handleRawMessage(rawMsg []byte) error {
-	cmd, err := parseCommand(string(rawMsg))
+func (s *Server) handleMessage(msg Message) error {
+	cmd, err := parseCommand(string(msg.data))
 	if err != nil {
 		return err
 	}
 	switch c := cmd.(type) {
 	case SetCommand:
-		return s.set(c.key, c.value)
-		fmt.Println("got command to set:", c.key, c.value)
+		//fmt.Println("got command to set:", c.key, c.value)
+		return s.kv.Set(c.key, c.value)
+	case GetCommand:
+		//fmt.Println("got command to get:", c.key)
+		val, ok := s.kv.Get(c.key)
+		if !ok {
+			return fmt.Errorf("key %s not found", c.key)
+		}
+		_, err = msg.peer.Send(val)
+		if err != nil {
+			slog.Error("peer send Error", "err", err)
+			return err
+		}
 	}
+
 	return nil
 }
 
@@ -79,8 +97,8 @@ func (s *Server) loop() {
 	for {
 		select {
 		// Add a new peer.
-		case rawMsg := <-s.msgCh:
-			if err := s.handleRawMessage(rawMsg); err != nil {
+		case msg := <-s.msgCh:
+			if err := s.handleMessage(msg); err != nil {
 				slog.Error("raw message error", "err", err)
 			}
 		case peer := <-s.addPeerCh:
@@ -111,26 +129,31 @@ func (s *Server) handleConn(conn net.Conn) {
 	// Create a new peer.
 	peer := NewPeer(conn, s.msgCh)
 	s.addPeerCh <- peer
-	slog.Info("new peer connected", "remoteAddr", conn.RemoteAddr())
+	//slog.Info("new peer connected", "remoteAddr", conn.RemoteAddr())
 	if err := peer.readLoop(); err != nil {
 		slog.Error("peer read error", err, "remoteAddr", conn.RemoteAddr())
 	}
 }
 
 func main() {
-	//
+	server := NewServer(Config{})
 	go func() {
-		server := NewServer(Config{})
 		log.Fatal(server.Start())
 	}()
 	time.Sleep(time.Second)
 
+	client := redisClient.New("localhost:3333")
 	for i := 0; i < 10; i++ {
-		client := redisClient.New("localhost:3333")
-		if err := client.Set(context.Background(), "foo", "bar"); err != nil {
+		if err := client.Set(context.Background(), fmt.Sprintf("foo_%d", i), fmt.Sprintf("bar_%d", i)); err != nil {
 			log.Fatal(err)
 		}
+		time.Sleep(10 * time.Microsecond) // conn.dial for set might be slower than conn.dial for get
+		val, err := client.Get(context.Background(), fmt.Sprintf("foo_%d", i))
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("got this back:", val)
 	}
-
+	fmt.Println(server.kv.data)
 	time.Sleep(time.Second) // We are blocking here so the program doesnt exits
 }
