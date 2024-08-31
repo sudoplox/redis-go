@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
 	"net"
+	redisClient "redis-go/client"
+	"time"
 )
 
 const defaultListenAddr = ":3333"
@@ -55,9 +58,20 @@ func (s *Server) Start() error {
 	slog.Info("server started", "addr", s.ListenAddr)
 	return s.acceptLoop()
 }
+func (s *Server) set(key string, val string) error {
+
+}
 
 func (s *Server) handleRawMessage(rawMsg []byte) error {
-	fmt.Println(string(rawMsg))
+	cmd, err := parseCommand(string(rawMsg))
+	if err != nil {
+		return err
+	}
+	switch c := cmd.(type) {
+	case SetCommand:
+		return s.set(c.key, c.value)
+		fmt.Println("got command to set:", c.key, c.value)
+	}
 	return nil
 }
 
@@ -104,6 +118,19 @@ func (s *Server) handleConn(conn net.Conn) {
 }
 
 func main() {
-	server := NewServer(Config{})
-	log.Fatal(server.Start())
+	//
+	go func() {
+		server := NewServer(Config{})
+		log.Fatal(server.Start())
+	}()
+	time.Sleep(time.Second)
+
+	for i := 0; i < 10; i++ {
+		client := redisClient.New("localhost:3333")
+		if err := client.Set(context.Background(), "foo", "bar"); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	time.Sleep(time.Second) // We are blocking here so the program doesnt exits
 }
